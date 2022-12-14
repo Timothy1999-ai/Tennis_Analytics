@@ -1,0 +1,26 @@
+---
+title: "Tennis-Models"
+author: "Timothy Stubblefield"
+date: "2022-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load in packages
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+```
+
+
+# 1) - Load in data
+```{r}
+atp_final <- read.csv("C:/Users/timst/Documents/SMU/Fall_2022/STAT6341/Project/Tennis_Data_Reduced/2015-2022_Final.csv")
+```
+
+
+

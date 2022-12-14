@@ -1,0 +1,384 @@
+---
+title: "Project Visualizations"
+author: "Timothy Stubblefield"
+date: "9/27/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8)
+```
+
+
+# Load in packages
+```{r}
+## Acquire demographic data on tennis players
+
+library(tidyverse)
+library(stringr)
+library(plotly)
+library(scales)
+#library(ggradar)
+
+```
+
+
+# 1) - Tennis Demographics Data
+
+Note: The player demographics data contains 560602 players 
+
+
+```{r, echo=FALSE}
+demographics <- read.csv("https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_players.csv")
+
+demographics <- demographics %>%
+  rename(Country = ioc, Player_Id = player_id, First_Name = name_first,
+         Last_Name = name_last, DOB = dob, Height = height, Wikidata_Id = wikidata_id)
+```
+
+
+
+## Plot country demographics of ATP mens players
+```{r, echo=FALSE, warning=FALSE}
+
+country_plot <- demographics %>% 
+  count(Country) %>%
+  mutate(Prop = n/sum(n),
+         Percentage = round(Prop*100,2)) %>%
+  ggplot(aes(x = Country, y = Percentage, fill = Country)) + 
+  geom_bar(stat = "identity") +
+  coord_cartesian(clip = "off") +
+ # scale_y_continuous(labels = percent_format()) +
+  theme(axis.text.x = element_blank(),
+        axis.title = element_blank()
+  ) +
+  ggtitle("Country breakdown of Players via Country affiliation") +
+  labs(x = "Country", y = "Percentage")
+
+ggplotly(country_plot)
+  
+```
+
+
+\paragraph{} So, the US, Spain, Australia, Germany, and Italy have had a lot of male players throughout history play in professional tennis. 
+
+# 2) - Create a visualization that allows me to plot the proportion of service games won and the proportion of opponent service games broken for Grand Slams in 2021
+
+\paragraph{} Let me explain in plain English. Each game (first to 5 points but have to win by 2) one player does all the serving. Then the the other player serves the next game. Thus, we have:
+$$\text{Proportion of Service Games won} = \frac{\text{# of service games the player won}}{\text{# of games the player served}} $$ 
+Likewise, we have:
+$$\text{Proportion of Opponent Service Games broken} = \frac{\text{# of non service games the player won}}{\text{# of opponent service games}} $$
+
+```{r, echo=FALSE, warning=FALSE}
+# % service games won = serve games won/ total serve games
+# %breaks = breaks/total opponent serve games
+
+base_url <- "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_2021.csv"
+Info_Table <- read.csv(base_url, quote = "", 
+                           row.names = NULL, 
+                           stringsAsFactors = FALSE)
+
+#Subet only Grand Slam matches
+ATP_matches_2021 <- Info_Table %>% 
+  filter(tourney_level == "G")
+
+
+### Create data frame with player name, # matches won, % service games won, % break points won
+#   as columns
+
+
+# Get vector of all player names that participated in grand slams
+ATP_2021_GS_Names <- union(ATP_matches_2021$winner_name, ATP_matches_2021$loser_name)
+
+
+# Initialize list
+bubble_list <- vector("list", length=length(ATP_2021_GS_Names))
+names(bubble_list) <- ATP_2021_GS_Names
+
+###############################################################################
+# For each player, calculate the following:
+# --> total number matches played
+# --> total player service games (i.e. number games where player served)
+# --> total number service games won
+# --> total number break points won 
+# --> total number of opponent service games played
+
+
+
+for(i in 1:length(ATP_2021_GS_Names)){
+  
+  name <- ATP_2021_GS_Names[i]
+  
+  #Note: win filters data where the player is the winner of the match
+  #      lose filters data where the player is the loser of the match
+  
+  win <- ATP_matches_2021 %>%
+    filter(winner_name == name) %>%
+
+    # Number Service games won = Total player service games - # times player was broken
+    # Number of break points = Number opponent break points faced - Number of opponent break points saved
+    mutate(Service_Games_Won = w_SvGms - w_bpFaced + w_bpSaved,
+           Break_points_Won = l_bpFaced - l_bpSaved) %>%
+    
+    summarize(n = n(),
+              T_Service_Games = sum(w_SvGms, na.rm = T),
+              T_Service_Games_Won = sum(Service_Games_Won, na.rm = T),
+              T_Break_points_Won = sum(Break_points_Won, na.rm = T),
+              T_opp_Service_Games = sum(l_SvGms, na.rm = T))
+  
+  lose <- ATP_matches_2021 %>%
+    filter(loser_name == name) %>%
+    mutate(Service_Games_Won = l_SvGms - l_bpFaced + l_bpSaved,
+           Break_points_Won = w_bpFaced - w_bpSaved) %>%
+    summarize(n = n(), 
+              T_Service_Games = sum(l_SvGms, na.rm = T),
+              T_Service_Games_Won = sum(Service_Games_Won, na.rm = T),
+              T_Break_points_Won = sum(Break_points_Won, na.rm = T),
+              T_opp_Service_Games = sum(w_SvGms, na.rm = T))
+  
+  combined <- rbind(win,lose)
+  bubble_list[[i]] <- combined
+  
+}
+
+# Now create a data frame with the following 4 columns:
+# --> Player name
+# --> Total number matches played
+# --> Proportion of service games won
+# --> Proportion of opponent service games broken
+
+to_plot_dat <- data.frame(matrix(nrow = length(ATP_2021_GS_Names), ncol = 4))
+to_plot_dat[,1] <- ATP_2021_GS_Names
+
+
+for (i in 1:length(bubble_list))
+{
+  player_dat <- bubble_list[[i]] %>%
+    summarise_each(sum) %>%
+    mutate(Prop_Service_Games_Won = T_Service_Games_Won/T_Service_Games ,
+           Prop_Break_points_Won = T_Break_points_Won/T_opp_Service_Games)
+  
+  to_plot_dat[i,2] <- player_dat$n
+  to_plot_dat[i,3] <- player_dat$Prop_Service_Games_Won
+  to_plot_dat[i,4] <- player_dat$Prop_Break_points_Won
+}
+
+colnames(to_plot_dat) <- c("Player_Name", "Matches", "SvGmsW_Prop", "BPW_Prop")
+
+# Aside: Add a new column that extracts the last name of each player
+get.last.name <- function(name) {
+  d <- lapply(ifelse(grepl(",",name),strsplit(name,","),strsplit(name," ")),`[[`,2)
+  lapply(strsplit(gsub("^ ","",d), " "),`[[`,1)
+}
+
+#Add in Matches won as well
+to_plot_dat <- to_plot_dat %>%
+  left_join(
+    ATP_matches_2021 %>%
+      group_by(winner_name) %>%
+      dplyr::summarise(Matches_Won=n()),
+   by = c('Player_Name' = 'winner_name') 
+  ) %>% 
+  mutate(Matches_Won = ifelse(is.na(Matches_Won), 0, Matches_Won),
+         SvGmsW_Prop = as.numeric(SvGmsW_Prop),
+         BPW_Prop = as.numeric(BPW_Prop),
+         Last_Name = get.last.name(Player_Name)
+         ) %>%
+  arrange(desc(Matches))
+
+
+
+
+# create bubble plot
+final.plot <- ggplot(to_plot_dat[-c(1,2,3),], aes(x=SvGmsW_Prop*100, y=BPW_Prop*100, size = Matches_Won, label = Player_Name)) + 
+  geom_point(alpha = 0.8, color = "#008080") +
+  
+  #Add labels for Djokovic, Federer, Nadal, and Medvedev
+  #geom_text_repel(aes(label=ifelse(SvGmsW_Prop > 0.886486 & BPW_Prop > 0.2635869 , 
+  #                                 as.character(Last_Name),'')
+  #), size = 4.0, nudge_y = -4) +
+  
+  geom_text(data =  to_plot_dat %>% filter(Last_Name == "Djokovic"), 
+            aes(label=as.character(Last_Name)), size = 4, color = "red",
+            nudge_x = 3) +
+  
+  geom_text(data =  to_plot_dat %>% filter(Last_Name == "Nadal"), 
+            aes(label=as.character(Last_Name)), size = 4, color = "blue",
+            nudge_y = -3) +
+  geom_text(data =  to_plot_dat %>% filter(Last_Name == "Federer"), 
+            aes(label=as.character(Last_Name)), size = 4, color = "orange",
+            nudge_x = 3) +
+  geom_text(data =  to_plot_dat %>% filter(Last_Name == "Medvedev"), 
+            aes(label=as.character(Last_Name)), size = 4, color = "forestgreen",
+            nudge_x = 3) +
+  
+  #Adjust size of bubble points and legend title
+  scale_size(range = c(.1, 8), name="Matches Won") +
+  
+  #Color Djokovic Red
+  geom_point(data=to_plot_dat[1, ], aes(x=SvGmsW_Prop*100, y=BPW_Prop*100, size = Matches_Won),
+             colour="red", alpha = 0.7) +
+  
+  #Color Medvedev in Green
+  geom_point(data=to_plot_dat[2, ], aes(x=SvGmsW_Prop*100, y=BPW_Prop*100, size = Matches_Won),
+             colour="forestgreen", alpha = 0.7) +
+  
+  #Color Nadal in Blue
+  geom_point(data=to_plot_dat[13, ], aes(x=SvGmsW_Prop*100, y=BPW_Prop*100, size = Matches_Won),
+             colour="blue", alpha = 0.7) +
+  
+  #Color Federer in orange
+  geom_point(data=to_plot_dat[31, ], aes(x=SvGmsW_Prop*100, y=BPW_Prop*100, size = Matches_Won),
+             colour="orange", alpha = 0.7) +
+  
+  
+  
+  #Add titles
+  ggtitle("2021 Grand Slam Season") + 
+  xlab("% Service Games Held") + ylab("% Service Games Broken") +
+  theme_classic() +
+  
+  theme(panel.background = element_rect(fill = "#F5FFFA", # background color
+                                        colour = "black", # border color
+                                        size = 0.5, linetype = "solid"),
+        plot.title=element_text(size = rel(1.6),
+                                face = "bold", hjust = 0.5),
+        legend.position = "bottom",
+        legend.background = element_rect(colour = "gray"),
+        legend.key = element_rect(fill = "#F1F8F7", linetype = 1),
+        axis.title = element_text(face = "bold", size = 13)) +
+  
+  guides(size = guide_legend(override.aes = list(colour = list("#008080"))))
+
+final.plot
+
+
+
+```
+
+# 3) - Plot Probability of winning a server over time
+
+\paragraph{} Plot probability of winning on the serve for the Big 3 (Nadal, Djokovic, and Federer) by season.
+
+To calculate probability of winning on the serve use the following formula:
+$$\text{P(Winning on Serve)} = \frac{\text{# of times winning on 1st serve + # of times winning on 2nd serve}}{\text{# of serves}} $$
+Thus, P(Winning on Serve) is often computed at the game level, but can be extended to the season level by adding up these numbers for that player for the given year, which is what I do here.
+
+```{r, echo=FALSE}
+## Read in big dataset
+atp_total_matches <- read.csv("C:/Users/timst/Documents/SMU/Fall_2022/STAT6341/Project/Tennis_Data/atp_total_matches.csv",
+                              header = T)
+## Get big 3
+atp_matches_big3 <- atp_total_matches[,c(1,3,5:14,18)] %>%
+  filter(server %in% c("Novak Djokovic", "Rafael Nadal", "Roger Federer"))
+
+atp_matches_big3 <- atp_matches_big3 %>%
+  group_by(server, year) %>%
+  summarize_at(vars(colnames(atp_matches_big3)[3:12]),
+               sum) %>%
+  mutate(pr_1stIn = s_1stIn/s_svpt,
+         pr_2ndIn = s_2ndIn/s_svpt,
+         pr_w1_giv_1in = s_1stWon/s_1stIn,
+         pr_w2_giv_2in = s_2ndWon/s_2ndIn,
+         pr_win_on_1st_serve = pr_1stIn*pr_w1_giv_1in,
+         pr_win_on_2nd_serve = pr_2ndIn*pr_w2_giv_2in,
+         pr_win_on_serve = (s_1stWon + s_2ndWon)/s_svpt
+         )
+
+big3plot <- atp_matches_big3 %>%
+  ggplot(aes(x=year, y=pr_win_on_serve)) + geom_line(aes(colour=server)) +
+  ggtitle("Plot of the Probability of Winning on the serve for the Big 3") +
+  labs(x = "Year", y = "Probability of Winning on Serve")
+
+ggplotly(big3plot)
+
+  
+```
+
+
+
+# 4) - Create a radar plot
+```{r, echo=FALSE, warning=FALSE, eval=FALSE}
+## Get big 3 - but for different fields
+atp_surfaces_big3 <- atp_total_matches[,c(1,3,11,20)] %>%
+  filter(server %in% c("Novak Djokovic", "Rafael Nadal", "Roger Federer"))
+
+atp_surfaces_big3 <- atp_surfaces_big3 %>%
+  group_by(server, surface) %>%
+  count(s_ace) %>%
+  mutate(ace_percentage = sum(n)) %>%
+  pivot_wider(id_cols = server, names_from = surface, values_from = ace_percentage) %>%
+  replace(is.na(.), 0) %>%
+  as.data.frame()
+
+```
+
+```{r, echo=FALSE, eval=FALSE}
+## difficult to deal with
+for (i in 1:length(atp_surfaces_big3$server))
+{
+  atp_surfaces_big3$Carpet2[i] <- length(atp_surfaces_big3$Carpet[[i]])/atp_surfaces_big3$Carpet[[i]][1]
+  atp_surfaces_big3$Clay2[i] <- length(atp_surfaces_big3$Clay[[i]])/atp_surfaces_big3$Clay[[i]][1]
+  atp_surfaces_big3$Hard2[i] <- length(atp_surfaces_big3$Hard[[i]])/atp_surfaces_big3$Hard[[i]][1]
+  atp_surfaces_big3$Grass2[i] <- length(atp_surfaces_big3$Grass[[i]])/atp_surfaces_big3$Grass[[i]][1]
+}
+  
+atp_surfaces_big3 <- atp_surfaces_big3 %>%
+  select(-c(Carpet, Hard, Grass, Clay)) %>%
+  rename(Carpet = Carpet2,
+         Clay = Clay2,
+         Hard = Hard2,
+         Grass = Grass2)
+
+ggradar(atp_surfaces_big3, legend.position = 'bottom') + ggtitle("Radar Plot that displays service ace \n percentage by Surface for the Big 3")
+```
+
+\paragraph{} Most of these are quite low as expected execpt for carpet. However, it turns out each player only had a very small number of games on carpet which would explain why the Ace Service rate is so high for carpet. 
+
+
+# 5) - Violin Plots of Height (in cm) by Handedness
+```{r, echo=FALSE, warning=FALSE}
+violin_plot <- demographics %>%
+  plot_ly(
+    x = ~hand,
+    y = ~Height,
+    split = ~hand,
+    type = 'violin',
+    box = list(
+      visible = T
+    ),
+    meanline = list(
+      visible = T
+    )
+  ) 
+
+violin_plot <- violin_plot %>%
+  layout(
+    xaxis = list(
+      title = "Hand"
+    ),
+    yaxis = list(
+      title = "Height (cm)",
+      zeroline = F
+    ),
+    title = "Violin Plot of Height of players by Handedness"
+  )
+
+violin_plot
+```
+
+
+\parargraph{} Check how many of each there are.
+```{r, echo=FALSE}
+right <- length(which(demographics$hand == "R"))
+left <- length(which(demographics$hand == "L"))
+U <- length(which(demographics$hand == "U"))
+missing <- length(which(demographics$hand == ""))
+
+handCount <- data.frame(right, left,U, missing)
+handCount
+```
+
+
+\paragraph{} The demographics list contains any player who ever played on the ATP tour. Thus, some of the oldest playes have date of births around 1913. Thus, there are 56,602 players in that file. Given that U occurs mainly in the older players, I think U means the handedness of that player is "Unknown" but I'm not sure. And then some are actually missing which goes in a violin plot with no label. Overall, I will stick to using more recent data, from say the 1990's and beyond. 

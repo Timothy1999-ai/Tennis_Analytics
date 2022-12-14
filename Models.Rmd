@@ -1,0 +1,191 @@
+---
+title: "Models"
+author: "Timothy Stubblefield"
+date: "2022-12-13"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load in packages
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ranger)
+library(xgboost)
+library(caret)
+library(pls)
+library(stepPlr)
+```
+
+
+
+# Load in Clean Data
+```{r}
+atp_final <- read.csv("C:/Users/timst/Documents/SMU/Fall_2022/STAT6341/Project/Tennis_Data_Reduced/2015-2022_Final.csv",
+                                                       header =T)
+```
+
+
+# Make sure the response variable is a factor. Same for year. Also, omit NA values.
+```{r}
+atp_final$p1_won <- as.factor(atp_final$p1_won)
+atp_final$Year <- as.factor(atp_final$Year)
+atp_final <- na.omit(atp_final)
+```
+
+\paragraph{} Given that the data has underwent cleaning, feature processing, and wrangling, I want to build some classification models.
+
+
+# Data Splits
+For splitting the data, the training data is matches from 2015 to 2020 and the test data are matches in 2021 and 2022. 
+```{r recipe}
+set.seed(123)
+tennis_split <- make_splits(
+  atp_final %>% filter(as.numeric(Year) < 2021),
+  atp_final %>% filter(as.numeric(Year) >= 2021)
+)
+
+tennis.train <- training(tennis_split)
+tennis.test <- testing(tennis_split)
+```
+
+
+## Specify which columns will be used
+Use all columns expect X (number of observations in data), p1.id, p2,id
+```{r}
+index <- c(2,4,5:55)
+```
+
+
+# Recipe
+Use all the predictors I got in the models
+```{r}
+tennis_rec <- recipe(p1_won ~., data = atp_final[,index]) %>%
+                step_YeoJohnson(all_numeric()) %>%
+                step_zv(all_predictors()) %>%
+                step_center(all_predictors(), -all_nominal()) %>% 
+                #step_scale(all_predictors(), -all_nominal()) %>%
+                step_impute_knn(all_predictors(), neighbors = 3) %>%
+                step_dummy(all_nominal(), -all_outcomes())
+```
+
+### Create resampling
+Since I have quite a bit of data, I will just do 2 Fold CV repeated once.
+```{r}
+tennis_kfolds <- vfold_cv(tennis.train, v = 2, repeats = 1)
+```
+
+
+
+## Base Model: Logistic Regression
+
+### Workflow and Model
+```{r wf}
+tennis_logistic <- logistic_reg() %>% 
+                  set_mode("classification") %>%
+                  set_engine("glm") 
+
+#Specify modeling procedure
+tennis_logistic_wf <- workflow() %>% 
+            add_recipe(tennis_rec) %>% 
+            add_model(tennis_logistic)
+```
+
+
+### Training Data RMSE
+```{r training RMSE}
+tennis_logistic_fit <- fit_resamples(
+  tennis_logistic_wf,
+  resamples = tennis_kfolds,
+  metrics = metric_set(accuracy, kap, roc_auc)
+)
+```
+### Get Training Metrics
+```{r}
+tennis_logistic_fit %>% collect_metrics()
+```
+
+### Get Test Metrics
+```{r}
+tennis_logistic_wf %>% 
+  last_fit(tennis_split, metrics = metric_set(accuracy, kap, roc_auc)) %>%
+  collect_metrics()
+```
+
+
+## Model 2: Random Forest
+
+### Workflow and Model
+```{r}
+tennis_rf <- rand_forest(trees = 10*length(colnames(atp_final))-1) %>%
+  set_mode("classification") %>%
+  set_engine("ranger", seed = 456)
+
+
+tennis_rf_wf <- workflow() %>% 
+              add_recipe(tennis_rec) %>% 
+              add_model(tennis_rf)
+
+```
+
+
+### Fit the random forest model
+```{r}
+tennis_rf_fit <- fit_resamples(
+                  tennis_rf_wf,
+                  resamples = tennis_kfolds,
+                  metrics = metric_set(accuracy, kap, roc_auc))
+```
+
+
+
+
+## Models 3: PCA Dimension Reduction with Logistic 
+PCA only works on the numeric predictors
+
+```{r}
+atp_final_numeric <-  select_if(atp_final, is.numeric)
+atp_final_numeric <- na.omit(atp_final_numeric)
+tennis.pca <- prcomp(atp_final_numeric, center = T, scale. = T,)
+summary(tennis.pca)
+```
+
+
+### Plot princpal components
+```{r}
+plot(tennis.pca)
+```
+
+## Model 4: Penalized Logistic Regression
+Use caret for this.
+```{r}
+tennis.train.predictors <- tennis.train %>% select(-c(X,p1.id,p2.id,p1_won))
+tennis.train.outcome <- tennis.train$p1_won
+```
+
+Implement the model
+```{r}
+PLR.fit <- caret::train(tennis.train.predictors, tennis.train.outcome, 
+                 method = "glm", family = "binomial")
+```
+
+
+## Model 5: Logistic Regression in caret
+Use caret for this.
+```{r}
+tennis.train.predictors <- tennis.train %>% select(-c(X,p1.id,p2.id,p1_won))
+tennis.train.outcome <- tennis.train$p1_won
+```
+
+Implement the model
+```{r}
+PLR.fit <- caret::train(tennis.train.predictors, tennis.train.outcome, 
+                 method = "glm", family = "binomial")
+```
+
+
+
+## Model 6: 

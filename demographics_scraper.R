@@ -33,3 +33,4 @@ country_plot <- demographics %>%
   count(ioc) %>%
   mutate(prop = n/sum(n)) %>%
   plot_ly(x = "ioc", y = "prop", type = "bar")
+
